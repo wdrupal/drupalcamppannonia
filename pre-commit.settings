@@ -1,0 +1,90 @@
+#!/bin/bash
+continue_consent() {
+    printf "${BLUE}Do you want to force commit without fixing? (y or n) ${NC}\n"
+    read inp </dev/tty
+    if [ "$inp" != "y" ]
+    then
+        printf "${GREEN}Fix the error and commit again.${NC}\n"
+        exit 1
+    else
+        printf "${RED}I hope you know what you do... :(${NC}\n"
+    fi
+}
+
+# Colours list
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+printf "${BLUE}Starting pre-commit hook...${NC}\n"
+
+PROJECT=`php -r "echo dirname(dirname(dirname(realpath('$0'))));"`
+STAGED_FILES_CMD=`git diff --cached --name-only --diff-filter=ACMR HEAD | grep -E \\\\.php\|\.theme\|\.module\|\.inc\|\.install`
+
+# Determine if a file list is passed
+if [ "$#" -eq 1 ]
+then
+	oIFS=$IFS
+	IFS='
+	'
+	SFILES="$1"
+	IFS=$oIFS
+fi
+SFILES=${SFILES:-$STAGED_FILES_CMD}
+
+printf "${BLUE}Running PHP Lint...${NC}\n"
+for FILE in $SFILES
+do
+	php -l -d display_errors=0 $PROJECT/$FILE
+	if [ $? != 0 ]
+then
+    printf "${RED}Fix the error before commit.${NC}\n"
+    exit 1
+fi
+	FILES="$FILES $PROJECT/$FILE"
+	FILES_COMMA="$FILES_COMMA$PROJECT/$FILE,"
+done
+
+# Remove trailing comma character
+FILES_COMMA="${FILES_COMMA%"${FILES_COMMA##*[![:punct:]]}"}"
+printf "${BLUE}Running Code Sniffer - Drupal...${NC}\n"
+if [ "$FILES" ]
+then
+   %vendor%/bin/phpcs --standard=Drupal --extensions=php,theme,module,inc,install  --encoding=utf-8 -n -p $FILES
+   if [ $? != 0 ]
+   then
+       printf "${BLUE}Do you want to run PHPCBF to automatically fix the issues? (y or n) ${NC}\n"
+       read  phpcbf </dev/tty
+       if [ "$phpcbf" == "y" ]
+       then
+    %vendor%/bin/phpcbf --standard=Drupal --extensions=php,theme,module,inc,install  --encoding=utf-8 -n -p $FILES
+
+    %vendor%/bin/phpcs --standard=Drupal --extensions=php,theme,module,inc,install  --encoding=utf-8 -n -p $FILES
+
+
+    if [ $? != 0 ]
+    then
+        printf "${RED}Fix the error before commit.${NC}\n"
+        exit 1
+    else
+        printf "${GREEN}All is fixed!${NC}\n"
+    fi
+else
+    printf "${RED}Fix the error before commit.${NC}\n"
+    exit 1
+fi
+   fi
+fi
+
+printf "${BLUE}Running PHPMD...${NC}\n"
+if [ "$FILES_COMMA" ]
+then
+   %vendor%/bin/phpmd $FILES_COMMA text %vendor%/colours/codebeast/src/Tools/MD/Config/minimal.xml  --suffixes php,theme,module,inc,install
+   if [ $? != 0 ]
+then
+    printf "${RED}Fix the error before commit.${NC}\n"
+    exit 1
+fi
+fi
+exit $?
